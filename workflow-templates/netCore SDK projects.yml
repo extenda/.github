@@ -3,6 +3,15 @@ name: BuildCore
 on:
   push
 
+# Environment variables available to all jobs and steps in this workflow
+env:
+  GITHUB_SHA: ${{ github.sha }}
+  IMAGE: extenda/SampleCoreWebApi
+  DOCKERFILE: SampleCoreWebApi/Dockerfile
+  DOCKER_CONTEXT: SampleCoreWebApi
+  SOLUTION_PATH: core/CoreSample/CoreSample.sln
+  PROJECT_PATH: core/CoreSample/SampleCoreWebApi/SampleCoreWebApi.csproj
+
 jobs:
   build:
 
@@ -18,6 +27,7 @@ jobs:
           NEXUS_PASSWORD: nexus-password
           NEXUS_USERNAME: nexus-username
           NUGET_API_KEY: nuget-api-key
+
     - name: Determine version
       uses: extenda/actions/conventional-version@v0
       id: semver
@@ -47,15 +57,16 @@ jobs:
 
     - name: Build Sample Solution
       run: |
-        dotnet build --configuration Release /p:Version=${{ steps.semver.outputs.version }}
+        dotnet build $SOLUTION_PATH --configuration Release /p:Version=${{ steps.semver.outputs.version }}
 
     - name: Publish Sample API
+      if: env.$PROJECT_PATH != ''
       run: |
-        dotnet publish --configuration Release /p:Version=${{ steps.semver.outputs.version }}
+        dotnet publish $PROJECT_PATH --configuration Release /p:Version=${{ steps.semver.outputs.version }}
 
     - name: Test Sample Solution
       run: |
-        dotnet test --results-directory "./testresults" -l trx -c Release /p:CollectCoverage=true /p:CoverletOutputFormat=lcov --verbosity minimal
+        dotnet test $SOLUTION_PATH --results-directory "./testresults" -l trx -c Release /p:CollectCoverage=true /p:CoverletOutputFormat=lcov --verbosity minimal
 
     - name: Analyze with Sonar
       uses: extenda/actions/sonar-scanner@v0
@@ -65,16 +76,17 @@ jobs:
         main-branch: master
         service-account-key: ${{ secrets.SECRET_AUTH }}
 
-#    - name: Docker build and push
-#      uses: extenda/actions/docker@v0
-#      with:
-#        image: extenda/SampleCoreWebApi
-#        tag: latest,${{ steps.semver.outputs.composed-version-string }}
-#        dockerfile: SampleCoreWebApi/Dockerfile
-#        docker-context: SampleCoreWebApi
-#      env:
-#        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    - name: Docker build and push
+      if: env.$IMAGE != ''
+      uses: extenda/actions/docker@v0
+      with:
+        image: $IMAGE
+        tag: latest,${{ steps.semver.outputs.semver }}
+        dockerfile: $DOCKERFILE
+        docker-context: $DOCKER_CONTEXT
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     - name: Create Release
       if: github.ref == 'refs/heads/master'
