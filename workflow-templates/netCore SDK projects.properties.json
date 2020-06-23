@@ -1,0 +1,8 @@
+{
+  "name": "netCore build",
+  "description": "Builds netCore projects and new SDK projects.",
+  "iconName": "example-icon",
+  "categories": [
+    "C#"
+  ]
+}
