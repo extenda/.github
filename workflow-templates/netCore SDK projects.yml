@@ -1,0 +1,96 @@
+name: BuildCore
+
+on:
+  push
+
+# Environment variables available to all jobs and steps in this workflow
+env:
+  GITHUB_SHA: ${{ github.sha }}
+  IMAGE: extenda/SampleCoreWebApi
+  DOCKERFILE: SampleCoreWebApi/Dockerfile
+  DOCKER_CONTEXT: SampleCoreWebApi
+  SOLUTION_PATH: core/CoreSample/CoreSample.sln
+  PROJECT_PATH: core/CoreSample/SampleCoreWebApi/SampleCoreWebApi.csproj
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps: 
+    - uses: actions/checkout@v1
+
+    - uses: extenda/actions/gcp-secret-manager@v0
+      with:
+        service-account-key: ${{ secrets.secret_auth }}
+        secrets: |
+          NEXUS_PASSWORD: nexus-password
+          NEXUS_USERNAME: nexus-username
+          NUGET_API_KEY: nuget-api-key
+
+    - name: Determine version
+      uses: extenda/actions/conventional-version@v0
+      id: semver
+      with:
+        version-suffix: -${{ github.sha }}
+
+    - name: Setup .NET Core 3.1
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: 3.1.301
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v1.0.2
+      with:
+        nuget-version: 'latest'
+
+    - name: Set password for Extenda nuget repository
+      run: dotnet nuget update source Extenda --username ${{ env.NEXUS_USERNAME }} --password ${{ env.NEXUS_PASSWORD }} --store-password-in-clear-text
+
+    - name: Start Sonar Scanner
+      uses: extenda/actions/sonar-scanner@v0
+      with:
+        sonar-host: https://sonar.extenda.io
+        sonar-scanner: dotnet
+        main-branch: master
+        service-account-key: ${{ secrets.SECRET_AUTH }}
+
+    - name: Build Sample Solution
+      run: |
+        dotnet build $SOLUTION_PATH --configuration Release /p:Version=${{ steps.semver.outputs.version }}
+
+    - name: Publish Sample API
+      if: env.$PROJECT_PATH != ''
+      run: |
+        dotnet publish $PROJECT_PATH --configuration Release /p:Version=${{ steps.semver.outputs.version }}
+
+    - name: Test Sample Solution
+      run: |
+        dotnet test $SOLUTION_PATH --results-directory "./testresults" -l trx -c Release /p:CollectCoverage=true /p:CoverletOutputFormat=lcov --verbosity minimal
+
+    - name: Analyze with Sonar
+      uses: extenda/actions/sonar-scanner@v0
+      with:
+        sonar-host: https://sonar.extenda.io
+        sonar-scanner: dotnet
+        main-branch: master
+        service-account-key: ${{ secrets.SECRET_AUTH }}
+
+    - name: Docker build and push
+      if: env.$IMAGE != ''
+      uses: extenda/actions/docker@v0
+      with:
+        image: $IMAGE
+        tag: latest,${{ steps.semver.outputs.semver }}
+        dockerfile: $DOCKERFILE
+        docker-context: $DOCKER_CONTEXT
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    - name: Create Release
+      if: github.ref == 'refs/heads/master'
+      uses: extenda/actions/conventional-release@v0
+      id: release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
